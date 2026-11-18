@@ -13,6 +13,7 @@ class DigitClassifier(context: Context) {
     init {
         val buffer = loadModel(context)
         interpreter = Interpreter(buffer)
+        interpreter.allocateTensors()
     }
 
     private fun loadModel(context: Context): ByteBuffer {
