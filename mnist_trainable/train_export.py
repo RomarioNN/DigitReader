@@ -28,8 +28,8 @@ class TrainableModel(tf.Module):
             logits = self.model(x, training=True)
             loss = self.model.loss(y, logits)
         grads = tape.gradient(loss, self.model.trainable_variables)
-        self.model.optimizer.apply_gradients(
-            zip(grads, self.model.trainable_variables))
+        for var, grad in zip(self.model.trainable_variables, grads):
+            var.assign_sub(0.01 * grad)
         return {"loss": tf.reshape(loss, [1])}
 
     @tf.function(input_signature=[
@@ -57,6 +57,7 @@ class TrainableModel(tf.Module):
             val = tf.raw_ops.Restore(file_pattern=path,
                                      tensor_name=t_name,
                                      dt=tf.as_dtype(var.dtype), name='restore')
+            val = tf.reshape(val, var.shape)
             var.assign(val)
             out[t_name] = val
         return out
