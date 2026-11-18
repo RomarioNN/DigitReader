@@ -1,0 +1,45 @@
+name: Build DigitReader APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Train & Export mnist_trainable.tflite
+        run: |
+          pip install tensorflow==2.16.1 numpy
+          python mnist_trainable/train_export.py
+          mkdir -p app/src/main/assets
+          cp mnist_trainable.tflite app/src/main/assets/mnist_trainable.tflite
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.6'
+
+      - name: Build Debug APK
+        run: gradle assembleDebug
+
+      - name: Upload Ready APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DigitReader-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
