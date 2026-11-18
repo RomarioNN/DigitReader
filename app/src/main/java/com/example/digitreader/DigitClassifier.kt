@@ -30,41 +30,54 @@ class DigitClassifier(context: Context) {
         }
     }
 
-    /** input: FloatArray(784), нормализованный в [0,1] */
     fun predict(input: FloatArray): FloatArray {
-        val x = toBatch28x28(input)                 // [1, 28, 28]
-        val out = arrayOf(FloatArray(10))           // [1, 10]
+        val x = toBatch28x28(input)
+        val out = arrayOf(FloatArray(10))
+        val inKey = interpreter.getSignatureInputs("infer").firstOrNull() ?: "x"
+        val outKey = interpreter.getSignatureOutputs("infer").firstOrNull() ?: "output"
         interpreter.runSignature(
-            mapOf("x" to x),
-            mapOf("output" to out),
+            mapOf(inKey to x),
+            mapOf(outKey to out),
             "infer"
         )
         return out[0]
     }
 
-    /** Дообучение на одном примере. correctDigit — правильный класс 0..9 */
     fun train(input: FloatArray, correctDigit: Int): Float {
-        val x = toBatch28x28(input)                 // [1, 28, 28]
+        val x = toBatch28x28(input)
         val y = arrayOf(FloatArray(10).also { it[correctDigit] = 1f })
-        val lossOut = arrayOf(FloatArray(1))
+        val lossOut = FloatArray(1)
+        val outKey = interpreter.getSignatureOutputs("train").firstOrNull() ?: "loss"
 
         interpreter.runSignature(
             mapOf("x" to x, "y" to y),
-            mapOf("loss" to lossOut),
+            mapOf(outKey to lossOut),
             "train"
         )
-        return lossOut[0][0]
+        return lossOut[0]
     }
 
     fun saveWeights(path: String) {
-        val inp = mapOf("checkpoint_path" to arrayOf(path))
-        interpreter.runSignature(inp, emptyMap(), "save")
+        val inKey = interpreter.getSignatureInputs("save").firstOrNull() ?: "checkpoint_path"
+        val outKey = interpreter.getSignatureOutputs("save").firstOrNull() ?: "checkpoint_path"
+        val out = arrayOf("")
+        interpreter.runSignature(
+            mapOf(inKey to arrayOf(path)),
+            mapOf(outKey to out),
+            "save"
+        )
     }
 
     fun restoreWeightsIfExists(path: String) {
         if (!File(path).exists()) return
-        val inp = mapOf("checkpoint_path" to arrayOf(path))
-        interpreter.runSignature(inp, emptyMap(), "restore")
+        val inKey = interpreter.getSignatureInputs("restore").firstOrNull() ?: "checkpoint_path"
+        val outputs = mutableMapOf<String, Any>()
+        for (outName in interpreter.getSignatureOutputs("restore")) {
+            val tensor = interpreter.getOutputTensorFromSignature(outName, "restore")
+            val buf = ByteBuffer.allocateDirect(tensor.numBytes()).order(ByteOrder.nativeOrder())
+            outputs[outName] = buf
+        }
+        interpreter.runSignature(mapOf(inKey to arrayOf(path)), outputs, "restore")
     }
 
     fun close() = interpreter.close()
