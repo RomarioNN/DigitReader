@@ -42,8 +42,8 @@ class TrainableModel(tf.Module):
     @tf.function(input_signature=[tf.TensorSpec([1], tf.string, name='checkpoint_path')])
     def save(self, checkpoint_path):
         path = checkpoint_path[0]
-        names = [w.name for w in self.model.weights]
-        values = [w.read_value() for w in self.model.weights]
+        names = [f"w_{i}" for i, _ in enumerate(self.model.weights)]
+        values = [tf.convert_to_tensor(w) for w in self.model.weights]
         tf.raw_ops.Save(filename=path, tensor_names=names,
                         data=values, name='save')
         return {"checkpoint_path": checkpoint_path}
@@ -52,12 +52,13 @@ class TrainableModel(tf.Module):
     def restore(self, checkpoint_path):
         path = checkpoint_path[0]
         out = {}
-        for var in self.model.weights:
+        for i, var in enumerate(self.model.weights):
+            t_name = f"w_{i}"
             val = tf.raw_ops.Restore(file_pattern=path,
-                                     tensor_name=var.name,
-                                     dt=var.dtype, name='restore')
+                                     tensor_name=t_name,
+                                     dt=tf.as_dtype(var.dtype), name='restore')
             var.assign(val)
-            out[var.name] = val
+            out[t_name] = val
         return out
 
 
