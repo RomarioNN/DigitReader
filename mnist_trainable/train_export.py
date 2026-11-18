@@ -119,4 +119,4 @@ res_train = train_fn(x=test_x, y=test_y)
 print("Self-test train OK, loss:", float(res_train["loss"][0]))
 save_fn(checkpoint_path=np.array(["/tmp/test_digit.ckpt"], dtype=object))
 restore_fn(checkpoint_path=np.array(["/tmp/test_digit.ckpt"], dtype=object))
-print("Self-test save & restore OK!").
+print("Self-test save & restore OK!")
