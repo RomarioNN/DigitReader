@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#090B10">
+
+    <!-- ВЕРХНЯЯ ПАНЕЛЬ СТАТУСА И ПЕРЕКЛЮЧАТЕЛЯ РЕЖИМОВ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp"
+        android:background="#11151F">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="DigitReader"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/ckptStatusBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ckpt: заводской"
+            android:textColor="#A7F3D0"
+            android:textSize="11sp"
+            android:background="#1F2937"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/resetWeightsBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:text="Сброс"
+            android:textSize="11sp"
+            android:minWidth="0dp"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="0dp" />
+    </LinearLayout>
+
+    <!-- ПЕРЕКЛЮЧАТЕЛЬ ИСТОЧНИКОВ: КАМЕРА / ЛИСТ / ГАЛЕРЕЯ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp"
+        android:background="#0D111A">
+
+        <Button
+            android:id="@+id/modeCameraBtn"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            android:text="Камера"
+            android:textSize="12sp"
+            android:paddingVertical="0dp" />
+
+        <Button
+            android:id="@+id/modeSheetBtn"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            android:layout_marginHorizontal="4dp"
+            android:text="Лист"
+            android:textSize="12sp"
+            android:paddingVertical="0dp" />
+
+        <Button
+            android:id="@+id/loadPhotoBtn"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:text="Фото"
+            android:textSize="12sp"
+            android:paddingVertical="0dp" />
+    </LinearLayout>
+
+    <!-- ЗОНА ВВОДА: КАМЕРА / ХОЛСТ / ЗАХВАЧЕННЫЙ КАДР -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="270dp"
+        android:background="#000000">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/previewView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <com.example.digitreader.DrawingView
+            android:id="@+id/drawingView"
+            android:layout_width="230dp"
+            android:layout_height="230dp"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/capturedImage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/retryBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="10dp"
+            android:text="Заново"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="10dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/clearSheetBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginEnd="8dp"
+                android:text="Очистить"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/captureBtn"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="Сделать фото"
+                android:textSize="13sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- НИЖНЯЯ ПРОКРУЧИВАЕМАЯ ПАНЕЛЬ: РЕЗУЛЬТАТ, 28x28, SOFTMAX И ЖУРНАЛ -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#11151F">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- КАРТОЧКА РЕЗУЛЬТАТА + ОБРАБОТАННОЕ ФОТО 28x28 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="#181D2A"
+                android:padding="12dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal">
+
+                    <TextView
+                        android:id="@+id/resultDigit"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="?"
+                        android:textColor="#44DD44"
+                        android:textSize="82sp"
+                        android:textStyle="bold"
+                        android:includeFontPadding="false" />
+
+                    <TextView
+                        android:id="@+id/confidenceText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Загрузка модели..."
+                        android:textColor="#D1D5DB"
+                        android:textSize="13sp"
+                        android:gravity="center" />
+
+                    <Button
+                        android:id="@+id/wrongBtn"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:layout_marginTop="8dp"
+                        android:text="Это неверно"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <!-- ПРЕВЬЮ ТЕНЗОРА 28x28 -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal"
+                    android:layout_marginStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Вход 28×28"
+                        android:textColor="#9CA3AF"
+                        android:textSize="11sp"
+                        android:layout_marginBottom="4dp" />
+
+                    <ImageView
+                        android:id="@+id/mnistPreviewImage"
+                        android:layout_width="92dp"
+                        android:layout_height="92dp"
+                        android:background="#000000"
+                        android:padding="2dp"
+                        android:scaleType="fitXY" />
+
+                    <TextView
+                        android:id="@+id/preprocessStatsText"
+                        android:layout_width="110dp"
+                        android:layout_height="wrap_content"
+                        android:text="ожидание кадра"
+                        android:textColor="#6EE7B7"
+                        android:textSize="10sp"
+                        android:gravity="center"
+                        android:layout_marginTop="4dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ГИСТОГРАММА ВЕРОЯТНОСТЕЙ SOFTMAX 0..9 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="#181D2A"
+                android:padding="10dp"
+                android:layout_marginTop="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Вероятности Softmax (0–9)"
+                    android:textColor="#E5E7EB"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="6dp" />
+
+                <LinearLayout
+                    android:id="@+id/probsBarsContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="96dp"
+                    android:orientation="horizontal"
+                    android:gravity="bottom" />
+            </LinearLayout>
+
+            <!-- ЖУРНАЛ ДООБУЧЕНИЯ -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="#181D2A"
+                android:padding="10dp"
+                android:layout_marginTop="10dp">
+
+                <TextView
+                    android:id="@+id/trainingLogHeader"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Журнал дообучения (шагов: 0)"
+                    android:textColor="#E5E7EB"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/trainingLogText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Пока нет исправлений. Сделайте фото или нарисуйте цифру и нажмите «Это неверно»."
+                    android:textColor="#9CA3AF"
+                    android:textSize="11sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>
