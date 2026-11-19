@@ -481,8 +481,7 @@ class MainActivity : AppCompatActivity() {
                         val logLine = "#$trainStepsCount: было $prevDigit → цель $which | loss=${"%.3f".format(loss)} | ответ $newDigit (${"%.1f".format(probs[newDigit] * 100)}%)"
                         trainingLogs.add(0, logLine)
                         trainingLogHeader.text = "Журнал дообучения (шагов: $trainStepsCount)"
-                        trainingLogText.text = trainingLogs.take(12).joinToString("
-")
+                        trainingLogText.text = trainingLogs.take(12).joinToString("\n")
                     } catch (e: Throwable) {
                         Toast.makeText(
                             this@MainActivity,
