@@ -13,6 +13,8 @@ class DigitClassifier(context: Context) {
     init {
         val buffer = loadModel(context)
         interpreter = Interpreter(buffer)
+        interpreter.allocateTensors()
+        initWeights()
     }
 
     private fun loadModel(context: Context): ByteBuffer {
@@ -20,6 +22,21 @@ class DigitClassifier(context: Context) {
         return ByteBuffer.allocateDirect(bytes.size)
             .order(ByteOrder.nativeOrder())
             .also { it.put(bytes); it.rewind() }
+    }
+
+    /** Гарантированно инициализирует ResourceVariables в памяти TFLite на Android */
+    fun initWeights() {
+        val sigs = interpreter.signatureKeys
+        if (sigs.contains("init_weights")) {
+            val inKey = interpreter.getSignatureInputs("init_weights").firstOrNull() ?: "trigger"
+            val outKey = interpreter.getSignatureOutputs("init_weights").firstOrNull() ?: "ok"
+            val out = FloatArray(1)
+            interpreter.runSignature(
+                mapOf(inKey to floatArrayOf(1f)),
+                mapOf(outKey to out),
+                "init_weights"
+            )
+        }
     }
 
     private fun toBatch28x28(flat: FloatArray): Array<Array<FloatArray>> {
@@ -76,7 +93,6 @@ class DigitClassifier(context: Context) {
         val outputs = mutableMapOf<String, Any>()
         for (outName in interpreter.getSignatureOutputs("restore")) {
             val tensor = interpreter.getOutputTensorFromSignature(outName, "restore")
-            val shape = tensor.shape()
             val buf = ByteBuffer.allocateDirect(tensor.numBytes()).order(ByteOrder.nativeOrder())
             outputs[outName] = buf
         }
