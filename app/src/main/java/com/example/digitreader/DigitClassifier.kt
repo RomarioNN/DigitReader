@@ -24,7 +24,6 @@ class DigitClassifier(context: Context) {
             .also { it.put(bytes); it.rewind() }
     }
 
-    /** Гарантированно инициализирует ResourceVariables в памяти TFLite на Android */
     fun initWeights() {
         val sigs = interpreter.signatureKeys
         if (sigs.contains("init_weights")) {
@@ -39,18 +38,18 @@ class DigitClassifier(context: Context) {
         }
     }
 
-    private fun toBatch28x28(flat: FloatArray): Array<Array<FloatArray>> {
-        return Array(1) {
+    private fun toBatch28x28(inputs: List<FloatArray>): Array<Array<FloatArray>> {
+        return Array(inputs.size) { b ->
+            val flat = inputs[b]
             Array(28) { r ->
                 FloatArray(28) { c -> flat[r * 28 + c] }
             }
         }
     }
 
-    /** input: FloatArray(784), нормализованный в [0,1] */
     fun predict(input: FloatArray): FloatArray {
-        val x = toBatch28x28(input)                 // [1, 28, 28]
-        val out = arrayOf(FloatArray(10))           // [1, 10]
+        val x = toBatch28x28(listOf(input))
+        val out = arrayOf(FloatArray(10))
         val inKey = interpreter.getSignatureInputs("infer").firstOrNull() ?: "x"
         val outKey = interpreter.getSignatureOutputs("infer").firstOrNull() ?: "output"
         interpreter.runSignature(
@@ -61,19 +60,26 @@ class DigitClassifier(context: Context) {
         return out[0]
     }
 
-    /** Дообучение на одном примере. correctDigit — правильный класс 0..9 */
-    fun train(input: FloatArray, correctDigit: Int): Float {
-        val x = toBatch28x28(input)                 // [1, 28, 28]
-        val y = arrayOf(FloatArray(10).also { it[correctDigit] = 1f })
-        val lossOut = FloatArray(1)                 // [1] соответствует tf.reshape(loss, [1])
+    /** Батчевое дообучение (Experience Replay): обучает одновременно на новом и прошлых примерах */
+    fun trainBatch(inputs: List<FloatArray>, labels: List<Int>, epochs: Int = 5): Float {
+        if (inputs.isEmpty()) return 0f
+        val x = toBatch28x28(inputs)
+        val y = Array(labels.size) { idx ->
+            FloatArray(10).also { it[labels[idx].coerceIn(0, 9)] = 1f }
+        }
+        val lossOut = FloatArray(1)
         val outKey = interpreter.getSignatureOutputs("train").firstOrNull() ?: "loss"
 
-        interpreter.runSignature(
-            mapOf("x" to x, "y" to y),
-            mapOf(outKey to lossOut),
-            "train"
-        )
-        return lossOut[0]
+        var lastLoss = 0f
+        repeat(epochs.coerceAtLeast(1)) {
+            interpreter.runSignature(
+                mapOf("x" to x, "y" to y),
+                mapOf(outKey to lossOut),
+                "train"
+            )
+            lastLoss = lossOut[0]
+        }
+        return lastLoss
     }
 
     fun saveWeights(path: String) {

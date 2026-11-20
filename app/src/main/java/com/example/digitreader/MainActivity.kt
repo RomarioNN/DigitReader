@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -31,9 +32,13 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+
+data class ReplaySample(val input: FloatArray, val label: Int)
 
 class MainActivity : AppCompatActivity() {
 
@@ -68,9 +73,14 @@ class MainActivity : AppCompatActivity() {
     private var isSheetMode: Boolean = false
     private var trainStepsCount: Int = 0
     private val trainingLogs = mutableListOf<String>()
+    private val replayBuffer = mutableListOf<ReplaySample>()
 
     private val checkpointFile: File by lazy {
         File(filesDir, "digit_weights.ckpt")
+    }
+
+    private val replayFile: File by lazy {
+        File(filesDir, "replay_buffer.bin")
     }
 
     private val cameraPermission =
@@ -124,7 +134,7 @@ class MainActivity : AppCompatActivity() {
             resetResultOnly()
         }
         retryBtn.setOnClickListener { resetToInputMode() }
-        wrongBtn.setOnClickListener { showCorrectionDialog() }
+        wrongBtn.setOnClickListener { showTileCorrectionDialog() }
         resetWeightsBtn.setOnClickListener { resetModelWeights() }
 
         updateModeButtonsUI()
@@ -137,12 +147,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun loadReplayBufferFromDisk() {
+        replayBuffer.clear()
+        if (!replayFile.exists()) return
+        try {
+            DataInputStream(replayFile.inputStream().buffered()).use { dis ->
+                val count = dis.readInt().coerceIn(0, 60)
+                repeat(count) {
+                    val label = dis.readInt().coerceIn(0, 9)
+                    val arr = FloatArray(784) { dis.readFloat() }
+                    replayBuffer.add(ReplaySample(arr, label))
+                }
+            }
+        } catch (_: Throwable) {
+            replayBuffer.clear()
+        }
+    }
+
+    private fun saveReplayBufferToDisk() {
+        try {
+            DataOutputStream(replayFile.outputStream().buffered()).use { dos ->
+                dos.writeInt(replayBuffer.size)
+                for (s in replayBuffer) {
+                    dos.writeInt(s.label)
+                    for (v in s.input) dos.writeFloat(v)
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun loadModelAsync(restoreCkpt: Boolean) {
         confidenceText.text = "Загрузка модели..."
         lifecycleScope.launch {
             try {
                 var restored = false
                 val loaded = withContext(Dispatchers.IO) {
+                    loadReplayBufferFromDisk()
                     DigitClassifier(applicationContext).also {
                         if (restoreCkpt && checkpointFile.exists()) {
                             try {
@@ -157,6 +198,9 @@ class MainActivity : AppCompatActivity() {
                 classifier = loaded
                 modelInitError = null
                 updateCkptBadge(restored || trainStepsCount > 0)
+                if (replayBuffer.isNotEmpty()) {
+                    trainingLogHeader.text = "Журнал дообучения (в буфере: ${replayBuffer.size})"
+                }
                 confidenceText.text = if (isSheetMode) "Нарисуйте цифру" else "Наведите на цифру"
             } catch (e: Throwable) {
                 modelInitError = e.message ?: e.javaClass.simpleName
@@ -166,20 +210,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetModelWeights() {
-        if (checkpointFile.exists()) {
-            checkpointFile.delete()
-        }
+        if (checkpointFile.exists()) checkpointFile.delete()
+        if (replayFile.exists()) replayFile.delete()
+        replayBuffer.clear()
         trainStepsCount = 0
         trainingLogs.clear()
         trainingLogHeader.text = "Журнал дообучения (шагов: 0)"
-        trainingLogText.text = "Веса сброшены к заводским MNIST."
+        trainingLogText.text = "Веса и буфер примеров сброшены к заводским MNIST."
         loadModelAsync(restoreCkpt = false)
-        Toast.makeText(this, "Веса сброшены к базовым", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Веса и буфер сброшены к базовым", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateCkptBadge(isCustom: Boolean) {
         if (isCustom) {
-            ckptStatusBadge.text = if (trainStepsCount > 0) "ckpt: дообучен ($trainStepsCount)" else "ckpt: сохранён"
+            ckptStatusBadge.text = if (replayBuffer.isNotEmpty()) {
+                "ckpt: обучен (${replayBuffer.size})"
+            } else {
+                "ckpt: сохранён"
+            }
             ckptStatusBadge.setTextColor(Color.parseColor("#6EE7B7"))
         } else {
             ckptStatusBadge.text = "ckpt: заводской"
@@ -348,7 +396,6 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Отображаем обработанное 28x28 изображение без сглаживания (пиксель в пиксель)
                 val drawable = BitmapDrawable(resources, prep.preview28x28).apply {
                     isFilterBitmap = false
                 }
@@ -443,55 +490,188 @@ class MainActivity : AppCompatActivity() {
         resetResultOnly()
     }
 
-    private fun showCorrectionDialog() {
+    /** Удобное меню выбора цифры в виде плиток 5x2 с явной подсветкой выбранной плитки */
+    private fun showTileCorrectionDialog() {
         val input = currentInput ?: return
         val activeClassifier = classifier ?: return
         val prevDigit = currentDigit
-        val labels = (0..9).map { it.toString() }.toTypedArray()
+        val density = resources.displayMetrics.density
+        val padPx = (16 * density).toInt()
+        val gapPx = (6 * density).toInt()
 
-        AlertDialog.Builder(this)
-            .setTitle("Какая цифра на самом деле?")
-            .setItems(labels) { _, which ->
-                lifecycleScope.launch {
-                    try {
-                        val loss = withContext(Dispatchers.Default) {
-                            activeClassifier.train(input, which)
-                        }
-                        withContext(Dispatchers.IO) {
-                            activeClassifier.saveWeights(checkpointFile.absolutePath)
-                        }
-                        trainStepsCount++
-                        updateCkptBadge(true)
+        var selectedDigit = -1
+        val tileViews = ArrayList<TextView>(10)
 
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Дообучено (loss=${"%.3f".format(loss)})",
-                            Toast.LENGTH_SHORT
-                        ).show()
+        fun makeTileBg(selected: Boolean): GradientDrawable {
+            return GradientDrawable().apply {
+                cornerRadius = 12 * density
+                setColor(if (selected) Color.parseColor("#10B981") else Color.parseColor("#1F2937"))
+                setStroke(
+                    (if (selected) 3 else 1) * density.toInt(),
+                    if (selected) Color.parseColor("#A7F3D0") else Color.parseColor("#374151")
+                )
+            }
+        }
 
-                        val probs = withContext(Dispatchers.Default) {
-                            activeClassifier.predict(input)
-                        }
-                        val newDigit = probs.indices.maxByOrNull { probs[it] } ?: 0
-                        currentDigit = newDigit
-                        resultDigit.text = newDigit.toString()
-                        confidenceText.text = "после дообучения: %.1f%%".format(probs[newDigit] * 100)
-                        renderProbsBars(probs, newDigit)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padPx, padPx, padPx, padPx)
+            setBackgroundColor(Color.parseColor("#11151F"))
+        }
 
-                        val logLine = "#$trainStepsCount: было $prevDigit → цель $which | loss=${"%.3f".format(loss)} | ответ $newDigit (${"%.1f".format(probs[newDigit] * 100)}%)"
-                        trainingLogs.add(0, logLine)
-                        trainingLogHeader.text = "Журнал дообучения (шагов: $trainStepsCount)"
-                        trainingLogText.text = trainingLogs.take(12).joinToString("\n")
-                    } catch (e: Throwable) {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Ошибка дообучения: ${e.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
+        val titleView = TextView(this).apply {
+            text = "Какая цифра на самом деле?"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, (4 * density).toInt())
+        }
+        val subtitleView = TextView(this).apply {
+            text = "Нажмите на плитку с нужной цифрой:"
+            textSize = 13f
+            setTextColor(Color.parseColor("#9CA3AF"))
+            setPadding(0, 0, 0, (12 * density).toInt())
+        }
+        root.addView(titleView)
+        root.addView(subtitleView)
+
+        val confirmBtn = Button(this).apply {
+            text = "Выберите цифру выше"
+            isEnabled = false
+            alpha = 0.5f
+        }
+
+        fun updateSelection(digit: Int) {
+            selectedDigit = digit
+            for (i in 0..9) {
+                val isSel = i == digit
+                tileViews[i].background = makeTileBg(isSel)
+                tileViews[i].setTextColor(if (isSel) Color.BLACK else Color.WHITE)
+            }
+            subtitleView.text = "Выбрана цифра: $digit"
+            subtitleView.setTextColor(Color.parseColor("#6EE7B7"))
+            confirmBtn.text = "Дообучить на цифре $digit"
+            confirmBtn.isEnabled = true
+            confirmBtn.alpha = 1.0f
+        }
+
+        // Две строки по 5 крупных плиток (0..4 и 5..9)
+        for (rowIdx in 0..1) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = gapPx
                 }
             }
-            .show()
+            for (colIdx in 0..4) {
+                val digit = rowIdx * 5 + colIdx
+                val tile = TextView(this).apply {
+                    text = digit.toString()
+                    textSize = 24f
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    background = makeTileBg(false)
+                    layoutParams = LinearLayout.LayoutParams(0, (56 * density).toInt(), 1f).apply {
+                        setMargins(gapPx / 2, gapPx / 2, gapPx / 2, gapPx / 2)
+                    }
+                    setOnClickListener { updateSelection(digit) }
+                }
+                tileViews.add(tile)
+                row.addView(tile)
+            }
+            root.addView(row)
+        }
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, (10 * density).toInt(), 0, 0)
+        }
+        val cancelBtn = Button(this).apply {
+            text = "Отмена"
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginEnd = (8 * density).toInt()
+            }
+        }
+        btnRow.addView(cancelBtn)
+        btnRow.addView(confirmBtn)
+        root.addView(btnRow)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(root)
+            .create()
+
+        cancelBtn.setOnClickListener { dialog.dismiss() }
+        confirmBtn.setOnClickListener {
+            val targetDigit = selectedDigit
+            if (targetDigit !in 0..9) return@setOnClickListener
+            dialog.dismiss()
+            runBatchTraining(activeClassifier, input, prevDigit, targetDigit)
+        }
+
+        dialog.show()
+    }
+
+    private fun runBatchTraining(
+        activeClassifier: DigitClassifier,
+        input: FloatArray,
+        prevDigit: Int,
+        targetDigit: Int
+    ) {
+        lifecycleScope.launch {
+            try {
+                // Добавляем новый пример в буфер повторения (Experience Replay, максимум 40 примеров)
+                replayBuffer.add(ReplaySample(input.copyOf(), targetDigit))
+                if (replayBuffer.size > 40) {
+                    replayBuffer.removeAt(0)
+                }
+
+                val batchInputs = replayBuffer.map { it.input }
+                val batchLabels = replayBuffer.map { it.label }
+
+                // Обучаем батчем (6 мягких шагов), чтобы модель помнила и 5, и 6 одновременно
+                val loss = withContext(Dispatchers.Default) {
+                    activeClassifier.trainBatch(batchInputs, batchLabels, epochs = 6)
+                }
+                withContext(Dispatchers.IO) {
+                    activeClassifier.saveWeights(checkpointFile.absolutePath)
+                    saveReplayBufferToDisk()
+                }
+                trainStepsCount++
+                updateCkptBadge(true)
+
+                Toast.makeText(
+                    this@MainActivity,
+                    "Дообучено на «$targetDigit» (батч ${replayBuffer.size}, loss=${"%.3f".format(loss)})",
+                    Toast.LENGTH_SHORT
+                ).show()
+
+                val probs = withContext(Dispatchers.Default) {
+                    activeClassifier.predict(input)
+                }
+                val newDigit = probs.indices.maxByOrNull { probs[it] } ?: 0
+                currentDigit = newDigit
+                resultDigit.text = newDigit.toString()
+                confidenceText.text = "цель $targetDigit → ответ $newDigit (%.1f%%)".format(probs[newDigit] * 100)
+                renderProbsBars(probs, newDigit)
+
+                val logLine = "#$trainStepsCount: было $prevDigit → выбрано $targetDigit | батч ${replayBuffer.size} | loss=${"%.3f".format(loss)} | ответ $newDigit (${"%.1f".format(probs[newDigit] * 100)}%)"
+                trainingLogs.add(0, logLine)
+                trainingLogHeader.text = "Журнал дообучения (в буфере: ${replayBuffer.size})"
+                trainingLogText.text = trainingLogs.take(12).joinToString("\n")
+            } catch (e: Throwable) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Ошибка дообучения: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     override fun onDestroy() {

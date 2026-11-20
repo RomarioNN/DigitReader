@@ -34,29 +34,25 @@ aug_model.fit(x_tr, y_tr, batch_size=128, epochs=6, verbose=1)
 _, acc = aug_model.evaluate(x_te, y_te, verbose=0)
 print(f"Pretrained CNN test accuracy: {acc:.4f}")
 
-# Извлекаем обученные веса слоёв
 c1_k, c1_b = [w.numpy().astype("float32") for w in aug_model.get_layer('conv1').weights]
 c2_k, c2_b = [w.numpy().astype("float32") for w in aug_model.get_layer('conv2').weights]
 w1_init, b1_init = [w.numpy().astype("float32") for w in aug_model.get_layer('dense1').weights]
 w2_init, b2_init = [w.numpy().astype("float32") for w in aug_model.get_layer('logits').weights]
 
-# ---------- 2. Экспорт CNN в tf.Module (замороженные свёртки + обучаемая голова) ----------
+# ---------- 2. Экспорт CNN в tf.Module со стабильным дообучением ----------
 class TrainableCNN(tf.Module):
     def __init__(self, c1_k, c1_b, c2_k, c2_b, w1, b1, w2, b2):
         super().__init__()
-        # Замороженный экстрактор признаков
         self.c1_k = tf.constant(c1_k, dtype=tf.float32)
         self.c1_b = tf.constant(c1_b, dtype=tf.float32)
         self.c2_k = tf.constant(c2_k, dtype=tf.float32)
         self.c2_b = tf.constant(c2_b, dtype=tf.float32)
 
-        # Начальные константы головы (для init_weights и сброса)
         self._w1_const = tf.constant(w1, dtype=tf.float32)
         self._b1_const = tf.constant(b1, dtype=tf.float32)
         self._w2_const = tf.constant(w2, dtype=tf.float32)
         self._b2_const = tf.constant(b2, dtype=tf.float32)
 
-        # Обучаемые переменные классификатора (800 -> 64 -> 10)
         self.w1 = tf.Variable(w1, name="w1")
         self.b1 = tf.Variable(b1, name="b1")
         self.w2 = tf.Variable(w2, name="w2")
@@ -93,10 +89,13 @@ class TrainableCNN(tf.Module):
             loss = tf.reduce_mean(
                 tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=logits)
             )
+        # Раздельный мягкий learning rate + клиппинг градиентов (исключает перелёт и смещение весов)
         vars_list = [self.w1, self.b1, self.w2, self.b2]
+        lrs = [0.0015, 0.0015, 0.015, 0.015]
         grads = tape.gradient(loss, vars_list)
-        for v, g in zip(vars_list, grads):
-            v.assign_sub(0.05 * g)
+        for v, g, lr in zip(vars_list, grads, lrs):
+            g_clipped = tf.clip_by_norm(g, 1.0)
+            v.assign_sub(lr * g_clipped)
         return {"loss": tf.reshape(loss, [1])}
 
     @tf.function(input_signature=[
@@ -146,15 +145,15 @@ tflite = conv.convert()
 open("mnist_trainable.tflite", "wb").write(tflite)
 print(f"Saved CNN mnist_trainable.tflite ({len(tflite)/1024:.1f} KB)")
 
-# ---------- 3. Автопроверка всех 5 сигнатур ----------
+# ---------- 3. Автопроверка всех 5 сигнатур (включая батч из 4 примеров) ----------
 interp = tf.lite.Interpreter(model_content=tflite)
 interp.get_signature_runner("init_weights")(trigger=np.array([1.0], dtype=np.float32))
-test_x = x_te[:1, :, :, 0]
-test_y = y_te[:1]
-res_infer = interp.get_signature_runner("infer")(x=test_x)
+test_x = x_te[:4, :, :, 0]
+test_y = y_te[:4]
+res_infer = interp.get_signature_runner("infer")(x=test_x[:1])
 print("Self-test infer OK, pred:", int(np.argmax(res_infer["output"])))
 res_train = interp.get_signature_runner("train")(x=test_x, y=test_y)
-print("Self-test train OK, loss:", float(res_train["loss"][0]))
+print("Self-test batch train OK, loss:", float(res_train["loss"][0]))
 interp.get_signature_runner("save")(checkpoint_path=np.array(["/tmp/test_cnn.ckpt"], dtype=object))
 interp.get_signature_runner("restore")(checkpoint_path=np.array(["/tmp/test_cnn.ckpt"], dtype=object))
 print("Self-test CNN all 5 signatures OK!")

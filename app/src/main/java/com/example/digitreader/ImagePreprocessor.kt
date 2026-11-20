@@ -14,10 +14,6 @@ data class PreprocessResult(
 
 object ImagePreprocessor {
 
-    /**
-     * Преобразует Bitmap (с камеры, галереи или холста) в тензор 28x28 в стиле MNIST
-     * (белая цифра на чёрном фоне) + возвращает Bitmap 28x28 для показа на экране и статистику.
-     */
     fun preprocess(bitmap: Bitmap): PreprocessResult? {
         val w = bitmap.width
         val h = bitmap.height
@@ -41,10 +37,8 @@ object ImagePreprocessor {
         val meanG = (sumG / pixels.size).toFloat()
         if (meanG - minG < 22f) return null
 
-        // Адаптивный порог (работает и с карандашом на сероватом листе, и с чёрным маркером)
         val threshold = (meanG - (meanG - minG) * 0.42f).coerceIn(55f, 175f)
 
-        // 1. Поиск BBox тёмных пикселей (с небольшим игнорированием самых краёв 3%, если это фото)
         var minX = w; var minY = h; var maxX = -1; var maxY = -1; var cnt = 0
         for (i in gray.indices) {
             if (gray[i] < threshold) {
@@ -59,7 +53,6 @@ object ImagePreprocessor {
         }
         if (cnt < 35 || maxX < 0) return null
 
-        // 2. Crop с отступом 10%
         val pad = (maxOf(maxX - minX, maxY - minY) * 0.10f).toInt().coerceAtLeast(2)
         val x0 = (minX - pad).coerceAtLeast(0)
         val y0 = (minY - pad).coerceAtLeast(0)
@@ -68,7 +61,6 @@ object ImagePreprocessor {
         val cw = x1 - x0 + 1
         val ch = y1 - y0 + 1
 
-        // 3. Инверсия с контрастной нормализацией (фон -> 0, штрихи -> до 255)
         val invPixels = IntArray(cw * ch)
         val denom = (threshold - minG).coerceAtLeast(15f)
         for (y in 0 until ch) {
@@ -86,9 +78,8 @@ object ImagePreprocessor {
         }
         val inv = Bitmap.createBitmap(invPixels, cw, ch, Bitmap.Config.ARGB_8888)
 
-        // 4. Ресайз в 28x28 (вписываем в область 22x22 с полями как в MNIST)
         val size = 28
-        val inner = 22f
+        val inner = 20f
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val outCanvas = Canvas(out).apply { drawColor(Color.BLACK) }
         val scale = minOf(inner / cw, inner / ch)
@@ -103,17 +94,36 @@ object ImagePreprocessor {
             Paint(Paint.FILTER_BITMAP_FLAG)
         )
 
-        // 5. FloatArray(784) в [0, 1]
         val buf = IntArray(size * size)
         out.getPixels(buf, 0, size, 0, 0, size, size)
-        var active = 0
-        val input = FloatArray(size * size) { i ->
-            val f = (buf[i] and 0xFF) / 255f
-            if (f > 0.1f) active++
-            f
+        var input = FloatArray(size * size) { i -> (buf[i] and 0xFF) / 255f }
+
+        // Мягкое утолщение тонких штрихов (если активных пикселей < 90, приближаем к толщине MNIST)
+        var active = input.count { it > 0.15f }
+        if (active < 90) {
+            val dilated = FloatArray(size * size)
+            for (r in 0 until size) {
+                for (c in 0 until size) {
+                    var best = input[r * size + c]
+                    if (r > 0) best = maxOf(best, input[(r - 1) * size + c] * 0.72f)
+                    if (r < size - 1) best = maxOf(best, input[(r + 1) * size + c] * 0.72f)
+                    if (c > 0) best = maxOf(best, input[r * size + (c - 1)] * 0.72f)
+                    if (c < size - 1) best = maxOf(best, input[r * size + (c + 1)] * 0.72f)
+                    dilated[r * size + c] = best.coerceIn(0f, 1f)
+                }
+            }
+            input = dilated
+            active = input.count { it > 0.15f }
         }
 
+        // Обновляем preview Bitmap 28x28, чтобы пользователь видел ровно то, что пошло в сеть
+        val previewPixels = IntArray(size * size) { i ->
+            val v = (input[i] * 255f).toInt().coerceIn(0, 255)
+            Color.rgb(v, v, v)
+        }
+        val previewBmp = Bitmap.createBitmap(previewPixels, size, size, Bitmap.Config.ARGB_8888)
+
         val stats = "BBox ${cw}x${ch}px | порог ${threshold.toInt()} | акт. $active/784"
-        return PreprocessResult(input, out, stats)
+        return PreprocessResult(input, previewBmp, stats)
     }
 }
